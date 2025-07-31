@@ -21,9 +21,9 @@ httpx>=0.27.0
 loguru==0.7.3
 
 # Database and data processing
-sqlite3
-dataclasses
-hashlib
+# sqlite3 is built into Python, no need to install
+# dataclasses is built into Python 3.7+, no need to install
+# hashlib is built into Python, no need to install
 
 # System monitoring (optional)
 psutil>=5.9.0
