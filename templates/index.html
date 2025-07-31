@@ -3,11 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Advanced Data Management System</title>
+    <title>Advanced Data Management System - Live</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
     <style>
         :root {
+            /* Dark Mode Colors */
             --primary: #6366f1;
             --primary-dark: #4f46e5;
             --primary-light: #818cf8;
@@ -17,19 +19,42 @@
             --warning: #f59e0b;
             --success: #10b981;
             --info: #3b82f6;
-            --dark: #0f172a;
-            --dark-light: #1e293b;
-            --gray: #64748b;
-            --gray-light: #94a3b8;
-            --light: #f8fafc;
-            --white: #ffffff;
-            --border: #e2e8f0;
-            --shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-            --shadow-lg: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-            --gradient-primary: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
-            --gradient-secondary: linear-gradient(135deg, var(--secondary) 0%, var(--info) 100%);
-            --glass-bg: rgba(255, 255, 255, 0.1);
-            --glass-border: rgba(255, 255, 255, 0.2);
+            
+            /* Dark Theme */
+            --dark: #0a0a0a;
+            --dark-light: #1a1a1a;
+            --dark-lighter: #2a2a2a;
+            --dark-border: #333333;
+            
+            /* Text Colors */
+            --text-primary: #ffffff;
+            --text-secondary: #b0b0b0;
+            --text-muted: #888888;
+            
+            /* Background Colors */
+            --bg-primary: #0a0a0a;
+            --bg-secondary: #1a1a1a;
+            --bg-tertiary: #2a2a2a;
+            --bg-glass: rgba(255, 255, 255, 0.05);
+            --bg-glass-hover: rgba(255, 255, 255, 0.1);
+            
+            /* Borders */
+            --border: #333333;
+            --border-light: #444444;
+            
+            /* Shadows */
+            --shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+            --shadow-lg: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+            --shadow-glow: 0 0 20px rgba(99, 102, 241, 0.3);
+            
+            /* Gradients */
+            --gradient-primary: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+            --gradient-secondary: linear-gradient(135deg, #10b981 0%, #3b82f6 100%);
+            --gradient-dark: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
+            
+            /* Animations */
+            --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            --transition-fast: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
         * {
@@ -40,11 +65,37 @@
 
         body {
             font-family: 'Inter', sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: var(--dark);
+            background: var(--bg-primary);
+            color: var(--text-primary);
             line-height: 1.6;
             min-height: 100vh;
             overflow-x: hidden;
+            transition: var(--transition);
+        }
+
+        /* Dark Mode Toggle */
+        .theme-toggle {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            background: var(--bg-glass);
+            border: 1px solid var(--border);
+            border-radius: 50px;
+            padding: 10px;
+            cursor: pointer;
+            transition: var(--transition);
+            backdrop-filter: blur(10px);
+        }
+
+        .theme-toggle:hover {
+            background: var(--bg-glass-hover);
+            transform: scale(1.05);
+        }
+
+        .theme-toggle i {
+            color: var(--text-primary);
+            font-size: 1.2rem;
         }
 
         /* Animated Background */
@@ -55,7 +106,7 @@
             width: 100%;
             height: 100%;
             z-index: -1;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: var(--gradient-dark);
         }
 
         .animated-bg::before {
@@ -65,13 +116,64 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.05'%3E%3Ccircle cx='30' cy='30' r='2'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+            background: 
+                radial-gradient(circle at 20% 80%, rgba(99, 102, 241, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, rgba(139, 92, 246, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 40% 40%, rgba(16, 185, 129, 0.05) 0%, transparent 50%);
             animation: float 20s ease-in-out infinite;
         }
 
+        .animated-bg::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.02'%3E%3Ccircle cx='30' cy='30' r='1'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+            animation: float 30s ease-in-out infinite reverse;
+        }
+
         @keyframes float {
-            0%, 100% { transform: translateY(0px); }
-            50% { transform: translateY(-20px); }
+            0%, 100% { transform: translateY(0px) rotate(0deg); }
+            50% { transform: translateY(-20px) rotate(180deg); }
+        }
+
+        /* Live Update Indicator */
+        .live-indicator {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            z-index: 1000;
+            background: var(--success);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            animation: pulse 2s infinite;
+        }
+
+        .live-indicator::before {
+            content: '';
+            width: 8px;
+            height: 8px;
+            background: white;
+            border-radius: 50%;
+            animation: blink 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0.3; }
         }
 
         .container {
@@ -326,32 +428,199 @@
             gap: 15px;
         }
 
-        /* Data Table */
+        /* Enhanced Data Table */
+        .table-container {
+            background: var(--bg-glass);
+            border-radius: 15px;
+            padding: 20px;
+            border: 1px solid var(--border);
+            backdrop-filter: blur(10px);
+        }
+
         .data-table {
             width: 100%;
             border-collapse: collapse;
-            margin-top: 20px;
+            margin-bottom: 15px;
         }
 
         .data-table th,
         .data-table td {
             padding: 15px;
             text-align: left;
-            border-bottom: 1px solid var(--glass-border);
+            border-bottom: 1px solid var(--border);
         }
 
         .data-table th {
-            color: var(--white);
+            color: var(--text-primary);
             font-weight: 600;
-            background: rgba(255, 255, 255, 0.05);
+            background: var(--bg-tertiary);
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        .data-table th.sortable {
+            cursor: pointer;
+            transition: var(--transition);
+        }
+
+        .data-table th.sortable:hover {
+            background: var(--bg-glass-hover);
+            color: var(--primary);
         }
 
         .data-table td {
-            color: rgba(255, 255, 255, 0.9);
+            color: var(--text-secondary);
+            transition: var(--transition);
+        }
+
+        .data-table tr {
+            transition: var(--transition);
         }
 
         .data-table tr:hover {
-            background: rgba(255, 255, 255, 0.05);
+            background: var(--bg-glass-hover);
+            transform: translateX(5px);
+        }
+
+        .data-table tr.new-record {
+            background: rgba(16, 185, 129, 0.1);
+            animation: slideIn 0.5s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        /* Record ID */
+        .record-id {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .id-text {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+        }
+
+        .new-badge {
+            background: var(--success);
+            color: white;
+            padding: 2px 6px;
+            border-radius: 10px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            animation: pulse 2s infinite;
+        }
+
+        /* Timestamp Info */
+        .timestamp-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .timestamp-date {
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .timestamp-time {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .time-ago {
+            font-size: 0.7rem;
+            color: var(--primary);
+            font-weight: 500;
+        }
+
+        /* Category Badge */
+        .category-badge {
+            background: var(--primary);
+            color: white;
+            padding: 4px 12px;
+            border-radius: 15px;
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+
+        /* Content Preview */
+        .content-preview {
+            cursor: pointer;
+            transition: var(--transition);
+        }
+
+        .content-preview:hover {
+            background: var(--bg-glass-hover);
+            border-radius: 8px;
+            padding: 8px;
+            margin: -8px;
+        }
+
+        .content-text {
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+
+        .read-more {
+            color: var(--primary);
+            font-size: 0.8rem;
+            font-weight: 500;
+            margin-top: 5px;
+        }
+
+        /* Action Buttons */
+        .action-buttons {
+            display: flex;
+            gap: 5px;
+        }
+
+        .action-buttons .btn {
+            padding: 6px 10px;
+            font-size: 0.8rem;
+        }
+
+        /* Table Info */
+        .table-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            padding: 10px 0;
+            border-top: 1px solid var(--border);
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-muted);
+        }
+
+        .empty-state i {
+            font-size: 4rem;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+
+        .empty-state h3 {
+            color: var(--text-primary);
+            margin-bottom: 10px;
+        }
+
+        .empty-state p {
+            margin-bottom: 30px;
         }
 
         /* Status Badges */
@@ -543,7 +812,7 @@
             background: var(--warning);
         }
 
-        /* Modal */
+        /* Enhanced Modal */
         .modal {
             display: none;
             position: fixed;
@@ -551,24 +820,43 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0, 0, 0, 0.5);
+            background: rgba(0, 0, 0, 0.8);
             z-index: 1000;
+            backdrop-filter: blur(5px);
         }
 
         .modal.show {
             display: flex;
             align-items: center;
             justify-content: center;
+            animation: modalFadeIn 0.3s ease-out;
+        }
+
+        @keyframes modalFadeIn {
+            from {
+                opacity: 0;
+                transform: scale(0.9);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
         }
 
         .modal-content {
-            background: var(--dark-light);
+            background: var(--bg-secondary);
             border-radius: 20px;
             padding: 30px;
             max-width: 500px;
             width: 90%;
             max-height: 80vh;
             overflow-y: auto;
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow-lg);
+        }
+
+        .modal-content.large {
+            max-width: 800px;
         }
 
         .modal-header {
@@ -576,10 +864,12 @@
             justify-content: space-between;
             align-items: center;
             margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid var(--border);
         }
 
         .modal-title {
-            color: var(--white);
+            color: var(--text-primary);
             font-size: 1.3rem;
             font-weight: 600;
         }
@@ -587,14 +877,77 @@
         .modal-close {
             background: none;
             border: none;
-            color: var(--gray-light);
+            color: var(--text-muted);
             font-size: 1.5rem;
             cursor: pointer;
+            transition: var(--transition);
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-close:hover {
+            background: var(--bg-glass-hover);
+            color: var(--text-primary);
+        }
+
+        .modal-body {
+            color: var(--text-secondary);
+        }
+
+        /* Record Details */
+        .record-details {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .detail-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 15px;
+            padding: 15px;
+            background: var(--bg-glass);
+            border-radius: 10px;
+            border: 1px solid var(--border);
+        }
+
+        .detail-row label {
+            font-weight: 600;
+            color: var(--text-primary);
+            min-width: 100px;
+            flex-shrink: 0;
+        }
+
+        .detail-row span,
+        .detail-row div {
+            flex: 1;
+        }
+
+        .content-full {
+            background: var(--bg-tertiary);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
         }
     </style>
 </head>
 <body>
     <div class="animated-bg"></div>
+    
+    <!-- Theme Toggle -->
+    <button class="theme-toggle" onclick="toggleTheme()">
+        <i class="fas fa-sun"></i>
+    </button>
     
     <div class="container">
         <!-- Header -->
@@ -839,13 +1192,169 @@
         let totalPages = 1;
         let currentFilters = {};
         let allData = [];
+        let liveUpdateInterval;
+        let lastUpdateTime = new Date().toISOString();
+        let isLiveMode = true;
+        let darkMode = true;
 
         // Initialize the application
         document.addEventListener('DOMContentLoaded', function() {
+            initializeApp();
+            setupEventListeners();
+            startLiveUpdates();
+            loadCategoriesAndTags();
+        });
+
+        function initializeApp() {
             loadData();
             loadFilterPresets();
-            setupEventListeners();
-        });
+            setupTheme();
+            showLiveIndicator();
+        }
+
+        function setupTheme() {
+            const savedTheme = localStorage.getItem('darkMode');
+            if (savedTheme !== null) {
+                darkMode = savedTheme === 'true';
+            }
+            applyTheme();
+        }
+
+        function applyTheme() {
+            document.body.classList.toggle('dark-mode', darkMode);
+            localStorage.setItem('darkMode', darkMode);
+            
+            const themeIcon = document.querySelector('.theme-toggle i');
+            if (themeIcon) {
+                themeIcon.className = darkMode ? 'fas fa-sun' : 'fas fa-moon';
+            }
+        }
+
+        function toggleTheme() {
+            darkMode = !darkMode;
+            applyTheme();
+        }
+
+        function showLiveIndicator() {
+            const indicator = document.createElement('div');
+            indicator.className = 'live-indicator';
+            indicator.innerHTML = '<i class="fas fa-broadcast-tower"></i> LIVE';
+            document.body.appendChild(indicator);
+        }
+
+        function startLiveUpdates() {
+            if (liveUpdateInterval) {
+                clearInterval(liveUpdateInterval);
+            }
+            
+            liveUpdateInterval = setInterval(() => {
+                if (isLiveMode) {
+                    checkForUpdates();
+                }
+            }, 5000); // Check every 5 seconds
+        }
+
+        async function checkForUpdates() {
+            try {
+                const response = await fetch(`/api/data/live?${new URLSearchParams({
+                    limit: 50,
+                    offset: (currentPage - 1) * 50,
+                    last_update: lastUpdateTime,
+                    ...currentFilters
+                })}`);
+                
+                const data = await response.json();
+                
+                if (data.success && data.new_count > 0) {
+                    // Update the data
+                    allData = data.records;
+                    renderDataTable(data.records);
+                    updatePagination();
+                    lastUpdateTime = data.current_time;
+                    
+                    // Show notification
+                    showToast(`🆕 ${data.new_count} new record(s) loaded!`, 'success');
+                    
+                    // Update statistics
+                    updateStatistics();
+                }
+            } catch (error) {
+                console.error('Live update error:', error);
+            }
+        }
+
+        async function loadCategoriesAndTags() {
+            try {
+                // Load categories
+                const categoriesResponse = await fetch('/api/data/categories');
+                const categoriesData = await categoriesResponse.json();
+                
+                if (categoriesData.success) {
+                    updateCategoryFilter(categoriesData.categories);
+                }
+                
+                // Load tags
+                const tagsResponse = await fetch('/api/data/tags');
+                const tagsData = await tagsResponse.json();
+                
+                if (tagsData.success) {
+                    updateTagsFilter(tagsData.tags);
+                }
+            } catch (error) {
+                console.error('Error loading categories and tags:', error);
+            }
+        }
+
+        function updateCategoryFilter(categories) {
+            const categoryFilter = document.getElementById('categoryFilter');
+            if (categoryFilter) {
+                const currentValue = categoryFilter.value;
+                categoryFilter.innerHTML = '<option value="">All Categories</option>';
+                
+                categories.forEach(category => {
+                    const option = document.createElement('option');
+                    option.value = category;
+                    option.textContent = category;
+                    categoryFilter.appendChild(option);
+                });
+                
+                categoryFilter.value = currentValue;
+            }
+        }
+
+        function updateTagsFilter(tags) {
+            // Create tags filter if it doesn't exist
+            let tagsFilter = document.getElementById('tagsFilter');
+            if (!tagsFilter) {
+                const filterGroup = document.createElement('div');
+                filterGroup.className = 'filter-group';
+                filterGroup.innerHTML = `
+                    <label class="filter-label">Tags</label>
+                    <select class="filter-select" id="tagsFilter">
+                        <option value="">All Tags</option>
+                    </select>
+                `;
+                
+                const sidebar = document.querySelector('.sidebar-section');
+                if (sidebar) {
+                    sidebar.appendChild(filterGroup);
+                }
+                
+                tagsFilter = document.getElementById('tagsFilter');
+            }
+            
+            const currentValue = tagsFilter.value;
+            tagsFilter.innerHTML = '<option value="">All Tags</option>';
+            
+            tags.forEach(tag => {
+                const option = document.createElement('option');
+                option.value = tag;
+                option.textContent = tag;
+                tagsFilter.appendChild(option);
+            });
+            
+            tagsFilter.value = currentValue;
+        }
 
         // Setup event listeners
         function setupEventListeners() {
@@ -897,57 +1406,208 @@
             }
         }
 
-        // Render data table
+        // Render data table with enhanced features
         function renderDataTable(records) {
             const container = document.getElementById('dataTableContainer');
             
             if (records.length === 0) {
-                container.innerHTML = '<div class="loading">No data found</div>';
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fas fa-database"></i>
+                        <h3>No data found</h3>
+                        <p>Try adjusting your filters or add some new data</p>
+                        <button class="btn btn-primary" onclick="showAddDataModal()">
+                            <i class="fas fa-plus"></i> Add Data
+                        </button>
+                    </div>
+                `;
                 return;
             }
 
             let tableHTML = `
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>Timestamp</th>
-                            <th>Category</th>
-                            <th>Tags</th>
-                            <th>Content</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th onclick="sortTable('id')" class="sortable">
+                                    ID <i class="fas fa-sort"></i>
+                                </th>
+                                <th onclick="sortTable('timestamp')" class="sortable">
+                                    Timestamp <i class="fas fa-sort"></i>
+                                </th>
+                                <th onclick="sortTable('category')" class="sortable">
+                                    Category <i class="fas fa-sort"></i>
+                                </th>
+                                <th>Tags</th>
+                                <th onclick="sortTable('content')" class="sortable">
+                                    Content <i class="fas fa-sort"></i>
+                                </th>
+                                <th onclick="sortTable('status')" class="sortable">
+                                    Status <i class="fas fa-sort"></i>
+                                </th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
             `;
 
-            records.forEach(record => {
+            records.forEach((record, index) => {
                 const tags = record.tags.map(tag => `<span class="tag">${tag}</span>`).join('');
                 const statusClass = record.status === 'active' ? 'status-active' : 'status-inactive';
+                const isNew = record.is_new;
+                const rowClass = isNew ? 'new-record' : '';
+                
+                // Enhanced content display with syntax highlighting
+                const contentPreview = record.content.length > 100 
+                    ? record.content.substring(0, 100) + '...' 
+                    : record.content;
+                
+                // Enhanced timestamp display
+                const timestamp = new Date(record.timestamp);
+                const timeAgo = getTimeAgo(timestamp);
                 
                 tableHTML += `
-                    <tr>
-                        <td>${record.id.substring(0, 8)}...</td>
-                        <td>${new Date(record.timestamp).toLocaleDateString()}</td>
-                        <td>${record.category}</td>
-                        <td><div class="tags-container">${tags}</div></td>
-                        <td>${record.content.substring(0, 100)}${record.content.length > 100 ? '...' : ''}</td>
-                        <td><span class="status-badge ${statusClass}">${record.status}</span></td>
+                    <tr class="${rowClass}" data-id="${record.id}">
                         <td>
-                            <button class="btn btn-secondary btn-small" onclick="editRecord('${record.id}')">
-                                <i class="fas fa-edit"></i>
-                            </button>
-                            <button class="btn btn-danger btn-small" onclick="deleteRecord('${record.id}')">
-                                <i class="fas fa-trash"></i>
-                            </button>
+                            <div class="record-id">
+                                <span class="id-text">${record.id.substring(0, 8)}...</span>
+                                ${isNew ? '<span class="new-badge">NEW</span>' : ''}
+                            </div>
+                        </td>
+                        <td>
+                            <div class="timestamp-info">
+                                <div class="timestamp-date">${timestamp.toLocaleDateString()}</div>
+                                <div class="timestamp-time">${timestamp.toLocaleTimeString()}</div>
+                                <div class="time-ago">${timeAgo}</div>
+                            </div>
+                        </td>
+                        <td>
+                            <span class="category-badge">${record.category}</span>
+                        </td>
+                        <td>
+                            <div class="tags-container">${tags}</div>
+                        </td>
+                        <td>
+                            <div class="content-preview" onclick="showFullContent('${record.id}')">
+                                <div class="content-text">${contentPreview}</div>
+                                ${record.content.length > 100 ? '<div class="read-more">Read more...</div>' : ''}
+                            </div>
+                        </td>
+                        <td>
+                            <span class="status-badge ${statusClass}">${record.status}</span>
+                        </td>
+                        <td>
+                            <div class="action-buttons">
+                                <button class="btn btn-secondary btn-small" onclick="editRecord('${record.id}')" title="Edit">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                <button class="btn btn-info btn-small" onclick="viewRecord('${record.id}')" title="View">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                                <button class="btn btn-danger btn-small" onclick="deleteRecord('${record.id}')" title="Delete">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
                         </td>
                     </tr>
                 `;
             });
 
-            tableHTML += '</tbody></table>';
+            tableHTML += `
+                        </tbody>
+                    </table>
+                    <div class="table-info">
+                        <span>Showing ${records.length} records</span>
+                        <span>•</span>
+                        <span>Last updated: ${new Date().toLocaleTimeString()}</span>
+                    </div>
+                </div>
+            `;
+            
             container.innerHTML = tableHTML;
+            
+            // Add animation for new records
+            setTimeout(() => {
+                document.querySelectorAll('.new-record').forEach(row => {
+                    row.classList.remove('new-record');
+                });
+            }, 3000);
+        }
+
+        function getTimeAgo(date) {
+            const now = new Date();
+            const diffInSeconds = Math.floor((now - date) / 1000);
+            
+            if (diffInSeconds < 60) return 'Just now';
+            if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`;
+            if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`;
+            return `${Math.floor(diffInSeconds / 86400)}d ago`;
+        }
+
+        function sortTable(column) {
+            const records = [...allData];
+            
+            records.sort((a, b) => {
+                let aVal = a[column];
+                let bVal = b[column];
+                
+                if (column === 'timestamp') {
+                    aVal = new Date(aVal);
+                    bVal = new Date(bVal);
+                }
+                
+                if (aVal < bVal) return -1;
+                if (aVal > bVal) return 1;
+                return 0;
+            });
+            
+            renderDataTable(records);
+        }
+
+        function showFullContent(recordId) {
+            const record = allData.find(r => r.id === recordId);
+            if (!record) return;
+            
+            const modal = document.createElement('div');
+            modal.className = 'modal show';
+            modal.innerHTML = `
+                <div class="modal-content large">
+                    <div class="modal-header">
+                        <h3 class="modal-title">Record Details</h3>
+                        <button class="modal-close" onclick="this.closest('.modal').remove()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="record-details">
+                            <div class="detail-row">
+                                <label>ID:</label>
+                                <span>${record.id}</span>
+                            </div>
+                            <div class="detail-row">
+                                <label>Category:</label>
+                                <span class="category-badge">${record.category}</span>
+                            </div>
+                            <div class="detail-row">
+                                <label>Status:</label>
+                                <span class="status-badge ${record.status === 'active' ? 'status-active' : 'status-inactive'}">${record.status}</span>
+                            </div>
+                            <div class="detail-row">
+                                <label>Created:</label>
+                                <span>${new Date(record.timestamp).toLocaleString()}</span>
+                            </div>
+                            <div class="detail-row">
+                                <label>Tags:</label>
+                                <div class="tags-container">${record.tags.map(tag => `<span class="tag">${tag}</span>`).join('')}</div>
+                            </div>
+                            <div class="detail-row">
+                                <label>Content:</label>
+                                <div class="content-full">${record.content}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
         }
 
         // Apply filters
@@ -1329,14 +1989,147 @@
             };
         }
 
-        // Edit and delete functions (placeholder)
-        function editRecord(id) {
-            showToast('Edit functionality coming soon', 'warning');
+        // Enhanced record functions
+        async function editRecord(id) {
+            const record = allData.find(r => r.id === id);
+            if (!record) return;
+            
+            const modal = document.createElement('div');
+            modal.className = 'modal show';
+            modal.innerHTML = `
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h3 class="modal-title">Edit Record</h3>
+                        <button class="modal-close" onclick="this.closest('.modal').remove()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <form id="editForm">
+                            <div class="filter-group">
+                                <label class="filter-label">Category</label>
+                                <input type="text" class="filter-input" id="editCategory" value="${record.category}" required>
+                            </div>
+                            <div class="filter-group">
+                                <label class="filter-label">Content</label>
+                                <textarea class="filter-input" id="editContent" rows="6" required>${record.content}</textarea>
+                            </div>
+                            <div class="filter-group">
+                                <label class="filter-label">Tags (comma-separated)</label>
+                                <input type="text" class="filter-input" id="editTags" value="${record.tags.join(', ')}">
+                            </div>
+                            <div class="filter-group">
+                                <label class="filter-label">Status</label>
+                                <select class="filter-select" id="editStatus">
+                                    <option value="active" ${record.status === 'active' ? 'selected' : ''}>Active</option>
+                                    <option value="inactive" ${record.status === 'inactive' ? 'selected' : ''}>Inactive</option>
+                                </select>
+                            </div>
+                            <div class="filter-actions">
+                                <button type="submit" class="btn btn-primary">Update Record</button>
+                                <button type="button" class="btn btn-secondary" onclick="this.closest('.modal').remove()">Cancel</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+            
+            // Handle form submission
+            document.getElementById('editForm').addEventListener('submit', async function(e) {
+                e.preventDefault();
+                
+                const updatedData = {
+                    id: record.id,
+                    category: document.getElementById('editCategory').value,
+                    content: document.getElementById('editContent').value,
+                    tags: document.getElementById('editTags').value.split(',').map(tag => tag.trim()).filter(tag => tag),
+                    status: document.getElementById('editStatus').value
+                };
+                
+                try {
+                    const response = await fetch('/api/data/update', {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(updatedData)
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        showToast('Record updated successfully', 'success');
+                        modal.remove();
+                        loadData(); // Refresh data
+                    } else {
+                        showToast('Error updating record: ' + data.error, 'error');
+                    }
+                } catch (error) {
+                    showToast('Error: ' + error.message, 'error');
+                }
+            });
         }
 
-        function deleteRecord(id) {
-            if (confirm('Are you sure you want to delete this record?')) {
-                showToast('Delete functionality coming soon', 'warning');
+        async function viewRecord(id) {
+            try {
+                const response = await fetch(`/api/data/record/${id}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    const record = data.record;
+                    showFullContent(record.id);
+                } else {
+                    showToast('Error loading record: ' + data.error, 'error');
+                }
+            } catch (error) {
+                showToast('Error: ' + error.message, 'error');
+            }
+        }
+
+        async function deleteRecord(id) {
+            if (!confirm('Are you sure you want to delete this record? This action cannot be undone.')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/data/delete/${id}`, {
+                    method: 'DELETE'
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showToast('Record deleted successfully', 'success');
+                    loadData(); // Refresh data
+                } else {
+                    showToast('Error deleting record: ' + data.error, 'error');
+                }
+            } catch (error) {
+                showToast('Error: ' + error.message, 'error');
+            }
+        }
+
+        async function updateStatistics() {
+            try {
+                const response = await fetch('/api/data/statistics');
+                const data = await response.json();
+                
+                if (data.success) {
+                    const stats = data.statistics;
+                    
+                    // Update statistics cards if they exist
+                    const totalRecordsEl = document.getElementById('totalRecords');
+                    const activeRecordsEl = document.getElementById('activeRecords');
+                    const recentRecordsEl = document.getElementById('recentRecords');
+                    const avgContentLengthEl = document.getElementById('avgContentLength');
+                    
+                    if (totalRecordsEl) totalRecordsEl.textContent = stats.total_records;
+                    if (activeRecordsEl) activeRecordsEl.textContent = stats.statuses.active || 0;
+                    if (recentRecordsEl) recentRecordsEl.textContent = stats.recent_records;
+                    if (avgContentLengthEl) avgContentLengthEl.textContent = Math.round(stats.content_analysis.average_content_length);
+                }
+            } catch (error) {
+                console.error('Error updating statistics:', error);
             }
         }
     </script>

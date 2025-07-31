@@ -231,6 +231,122 @@ class AdvancedDatabaseManager:
         except Exception as e:
             logger.error(f"Error getting filter presets: {e}")
             return []
+    
+    def update_record(self, record: DataRecord) -> bool:
+        """Update an existing data record"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE data_records 
+                    SET timestamp = ?, category = ?, tags = ?, content = ?, metadata = ?, status = ?
+                    WHERE id = ?
+                ''', (
+                    record.timestamp.isoformat(),
+                    record.category,
+                    json.dumps(record.tags),
+                    record.content,
+                    json.dumps(record.metadata),
+                    record.status,
+                    record.id
+                ))
+                conn.commit()
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error updating record: {e}")
+            return False
+    
+    def delete_record(self, record_id: str) -> bool:
+        """Delete a data record"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM data_records WHERE id = ?', (record_id,))
+                conn.commit()
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error deleting record: {e}")
+            return False
+    
+    def get_record_by_id(self, record_id: str) -> Optional[DataRecord]:
+        """Get a single record by ID"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT * FROM data_records WHERE id = ?', (record_id,))
+                row = cursor.fetchone()
+                
+                if row:
+                    return DataRecord(
+                        id=row[0],
+                        timestamp=datetime.fromisoformat(row[1]),
+                        category=row[2],
+                        tags=json.loads(row[3]) if row[3] else [],
+                        content=row[4],
+                        metadata=json.loads(row[5]) if row[5] else {},
+                        status=row[6]
+                    )
+                return None
+        except Exception as e:
+            logger.error(f"Error getting record by ID: {e}")
+            return None
+    
+    def get_categories(self) -> List[str]:
+        """Get all unique categories"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT DISTINCT category FROM data_records ORDER BY category')
+                return [row[0] for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Error getting categories: {e}")
+            return []
+    
+    def get_tags(self) -> List[str]:
+        """Get all unique tags"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT tags FROM data_records WHERE tags IS NOT NULL')
+                all_tags = []
+                for row in cursor.fetchall():
+                    if row[0]:
+                        tags = json.loads(row[0])
+                        all_tags.extend(tags)
+                return list(set(all_tags))  # Remove duplicates
+        except Exception as e:
+            logger.error(f"Error getting tags: {e}")
+            return []
+    
+    def get_recent_records(self, hours: int = 24) -> List[DataRecord]:
+        """Get records from the last N hours"""
+        try:
+            cutoff_time = datetime.now() - timedelta(hours=hours)
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT * FROM data_records 
+                    WHERE timestamp > ? 
+                    ORDER BY timestamp DESC
+                ''', (cutoff_time.isoformat(),))
+                
+                rows = cursor.fetchall()
+                records = []
+                for row in rows:
+                    record = DataRecord(
+                        id=row[0],
+                        timestamp=datetime.fromisoformat(row[1]),
+                        category=row[2],
+                        tags=json.loads(row[3]) if row[3] else [],
+                        content=row[4],
+                        metadata=json.loads(row[5]) if row[5] else {},
+                        status=row[6]
+                    )
+                    records.append(record)
+                return records
+        except Exception as e:
+            logger.error(f"Error getting recent records: {e}")
+            return []
 
 # Initialize database manager
 db_manager = AdvancedDatabaseManager(app.config['DATABASE'])
@@ -604,27 +720,187 @@ def api_keys_status():
 # Advanced Data Management Routes
 @app.route('/api/data/add', methods=['POST'])
 def add_data_record():
-    """Add a new data record"""
+    """Add a new data record with enhanced features"""
     try:
         data = request.get_json()
+        
+        # Enhanced validation
+        if not data.get('content', '').strip():
+            return jsonify({'success': False, 'error': 'Content is required'}), 400
+        
+        if not data.get('category', '').strip():
+            return jsonify({'success': False, 'error': 'Category is required'}), 400
+        
+        # Auto-generate tags from content if not provided
+        tags = data.get('tags', [])
+        if not tags and data.get('content'):
+            # Simple keyword extraction
+            content_words = data['content'].lower().split()
+            common_words = ['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by']
+            keywords = [word for word in content_words if word not in common_words and len(word) > 3][:5]
+            tags = keywords[:3]  # Limit to 3 auto-generated tags
+        
+        # Enhanced metadata
+        metadata = data.get('metadata', {})
+        metadata.update({
+            'created_by': request.remote_addr,
+            'user_agent': request.headers.get('User-Agent', ''),
+            'content_length': len(data.get('content', '')),
+            'word_count': len(data.get('content', '').split()),
+            'auto_generated_tags': len(tags) == 0
+        })
         
         record = DataRecord(
             id=str(uuid.uuid4()),
             timestamp=datetime.fromisoformat(data.get('timestamp', datetime.now().isoformat())),
             category=data.get('category', 'general'),
-            tags=data.get('tags', []),
+            tags=tags,
             content=data.get('content', ''),
-            metadata=data.get('metadata', {}),
+            metadata=metadata,
             status=data.get('status', 'active')
         )
         
         if db_manager.add_record(record):
-            return jsonify({'success': True, 'id': record.id})
+            # Return the complete record for immediate display
+            return jsonify({
+                'success': True, 
+                'id': record.id,
+                'record': {
+                    'id': record.id,
+                    'timestamp': record.timestamp.isoformat(),
+                    'category': record.category,
+                    'tags': record.tags,
+                    'content': record.content,
+                    'status': record.status,
+                    'metadata': record.metadata
+                }
+            })
         else:
             return jsonify({'success': False, 'error': 'Failed to add record'}), 500
             
     except Exception as e:
         logger.error(f"Error adding data record: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/data/update', methods=['PUT'])
+def update_data_record():
+    """Update an existing data record"""
+    try:
+        data = request.get_json()
+        record_id = data.get('id')
+        
+        if not record_id:
+            return jsonify({'success': False, 'error': 'Record ID is required'}), 400
+        
+        # Get existing record
+        existing_records = db_manager.get_records([FilterCriteria('id', 'equals', record_id)], limit=1)
+        if not existing_records:
+            return jsonify({'success': False, 'error': 'Record not found'}), 404
+        
+        existing_record = existing_records[0]
+        
+        # Update fields
+        if 'category' in data:
+            existing_record.category = data['category']
+        if 'content' in data:
+            existing_record.content = data['content']
+        if 'tags' in data:
+            existing_record.tags = data['tags']
+        if 'status' in data:
+            existing_record.status = data['status']
+        
+        # Update metadata
+        existing_record.metadata.update({
+            'last_modified': datetime.now().isoformat(),
+            'modified_by': request.remote_addr,
+            'content_length': len(existing_record.content),
+            'word_count': len(existing_record.content.split())
+        })
+        
+        # Update in database
+        if db_manager.update_record(existing_record):
+            return jsonify({
+                'success': True,
+                'record': {
+                    'id': existing_record.id,
+                    'timestamp': existing_record.timestamp.isoformat(),
+                    'category': existing_record.category,
+                    'tags': existing_record.tags,
+                    'content': existing_record.content,
+                    'status': existing_record.status,
+                    'metadata': existing_record.metadata
+                }
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Failed to update record'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error updating data record: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/data/delete/<record_id>', methods=['DELETE'])
+def delete_data_record(record_id):
+    """Delete a data record"""
+    try:
+        if db_manager.delete_record(record_id):
+            return jsonify({'success': True, 'message': 'Record deleted successfully'})
+        else:
+            return jsonify({'success': False, 'error': 'Failed to delete record'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error deleting data record: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/data/live', methods=['GET'])
+def get_live_data():
+    """Get live data updates with real-time features"""
+    try:
+        # Get query parameters
+        filters_str = request.args.get('filters', '')
+        limit = int(request.args.get('limit', 50))
+        offset = int(request.args.get('offset', 0))
+        last_update = request.args.get('last_update', '')
+        
+        filters = []
+        if filters_str:
+            filters = filter_manager.parse_filter_string(filters_str)
+        
+        # Get records
+        records = db_manager.get_records(filters, limit, offset)
+        
+        # Check for new records since last update
+        new_records = []
+        if last_update:
+            try:
+                last_update_time = datetime.fromisoformat(last_update)
+                new_records = [r for r in records if r.timestamp > last_update_time]
+            except:
+                pass
+        
+        # Convert to dict for JSON serialization
+        records_data = []
+        for record in records:
+            records_data.append({
+                'id': record.id,
+                'timestamp': record.timestamp.isoformat(),
+                'category': record.category,
+                'tags': record.tags,
+                'content': record.content,
+                'status': record.status,
+                'metadata': record.metadata,
+                'is_new': record.id in [r.id for r in new_records]
+            })
+        
+        return jsonify({
+            'success': True, 
+            'records': records_data,
+            'total_count': len(records),
+            'new_count': len(new_records),
+            'current_time': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting live data: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/data/get', methods=['GET'])
@@ -736,7 +1012,7 @@ def manage_filter_presets():
 
 @app.route('/api/data/statistics', methods=['GET'])
 def get_data_statistics():
-    """Get data statistics"""
+    """Get enhanced data statistics"""
     try:
         # Get basic statistics
         all_records = db_manager.get_records(limit=10000)
@@ -745,6 +1021,8 @@ def get_data_statistics():
         categories = {}
         tags = {}
         statuses = {}
+        hourly_stats = {}
+        daily_stats = {}
         
         for record in all_records:
             # Category count
@@ -756,24 +1034,118 @@ def get_data_statistics():
             
             # Status count
             statuses[record.status] = statuses.get(record.status, 0) + 1
+            
+            # Hourly statistics
+            hour = record.timestamp.hour
+            hourly_stats[hour] = hourly_stats.get(hour, 0) + 1
+            
+            # Daily statistics
+            day = record.timestamp.strftime('%Y-%m-%d')
+            daily_stats[day] = daily_stats.get(day, 0) + 1
         
         # Time-based statistics
         now = datetime.now()
         recent_records = [r for r in all_records if (now - r.timestamp).days <= 7]
+        today_records = [r for r in all_records if (now - r.timestamp).days == 0]
+        
+        # Content analysis
+        content_lengths = [len(r.content) for r in all_records]
+        word_counts = [r.metadata.get('word_count', len(r.content.split())) for r in all_records]
         
         statistics = {
             'total_records': len(all_records),
             'recent_records': len(recent_records),
+            'today_records': len(today_records),
             'categories': categories,
             'top_tags': dict(sorted(tags.items(), key=lambda x: x[1], reverse=True)[:10]),
             'statuses': statuses,
-            'average_content_length': sum(len(r.content) for r in all_records) / len(all_records) if all_records else 0
+            'hourly_distribution': dict(sorted(hourly_stats.items())),
+            'daily_distribution': dict(sorted(daily_stats.items())[-30:]),  # Last 30 days
+            'content_analysis': {
+                'average_content_length': sum(content_lengths) / len(content_lengths) if content_lengths else 0,
+                'average_word_count': sum(word_counts) / len(word_counts) if word_counts else 0,
+                'max_content_length': max(content_lengths) if content_lengths else 0,
+                'min_content_length': min(content_lengths) if content_lengths else 0
+            },
+            'growth_rate': {
+                'last_7_days': len(recent_records),
+                'last_24_hours': len(today_records),
+                'average_daily': len(all_records) / max(1, (now - min(r.timestamp for r in all_records)).days) if all_records else 0
+            }
         }
         
         return jsonify({'success': True, 'statistics': statistics})
         
     except Exception as e:
         logger.error(f"Error getting statistics: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/data/categories', methods=['GET'])
+def get_categories():
+    """Get all available categories"""
+    try:
+        categories = db_manager.get_categories()
+        return jsonify({'success': True, 'categories': categories})
+    except Exception as e:
+        logger.error(f"Error getting categories: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/data/tags', methods=['GET'])
+def get_tags():
+    """Get all available tags"""
+    try:
+        tags = db_manager.get_tags()
+        return jsonify({'success': True, 'tags': tags})
+    except Exception as e:
+        logger.error(f"Error getting tags: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/data/recent', methods=['GET'])
+def get_recent_data():
+    """Get recent data records"""
+    try:
+        hours = int(request.args.get('hours', 24))
+        records = db_manager.get_recent_records(hours)
+        
+        records_data = []
+        for record in records:
+            records_data.append({
+                'id': record.id,
+                'timestamp': record.timestamp.isoformat(),
+                'category': record.category,
+                'tags': record.tags,
+                'content': record.content,
+                'status': record.status,
+                'metadata': record.metadata
+            })
+        
+        return jsonify({'success': True, 'records': records_data})
+    except Exception as e:
+        logger.error(f"Error getting recent data: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/data/record/<record_id>', methods=['GET'])
+def get_single_record(record_id):
+    """Get a single record by ID"""
+    try:
+        record = db_manager.get_record_by_id(record_id)
+        if record:
+            return jsonify({
+                'success': True,
+                'record': {
+                    'id': record.id,
+                    'timestamp': record.timestamp.isoformat(),
+                    'category': record.category,
+                    'tags': record.tags,
+                    'content': record.content,
+                    'status': record.status,
+                    'metadata': record.metadata
+                }
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Record not found'}), 404
+    except Exception as e:
+        logger.error(f"Error getting single record: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/data/bulk-import', methods=['POST'])
