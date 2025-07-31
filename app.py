@@ -691,6 +691,11 @@ def index():
     """Enhanced main page with advanced features"""
     return render_template('index.html')
 
+@app.route('/chat')
+def chat():
+    """Chat interface for Manus AI Agent"""
+    return render_template('chat.html')
+
 @app.route('/file/<filename>')
 def file(filename):
     """Serve uploaded files"""
@@ -2017,7 +2022,7 @@ if __name__ == '__main__':
     # Log initial API key status
     logger.info("=== Initial API Key Status ===")
     for status in api_key_manager.get_keys_status():
-        logger.info(f"Key {status['name']}: Available={status['available']}, "
-                    f"Usage={status['usage']['requests_this_day']}/{status['limits']['max_per_day']} today")
+        logger.info(f"Key {status['name']}: Available={status['enabled']}, "
+                    f"Usage={status['usage']['requests_this_day']}/{status['limits']['max_requests_per_day']} today")
     
     app.run(host='0.0.0.0', port=3000,  debug=False)
