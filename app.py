@@ -1,5 +1,5 @@
 # app.py
-from flask import Flask, render_template, request, jsonify, send_from_directory, Response
+from flask import Flask, render_template, request, jsonify, send_from_directory, Response, session, redirect, url_for
 import mimetypes
 import os
 import time
@@ -13,18 +13,25 @@ import threading
 import toml
 import random
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 import logging
 import json
 import uuid
 from werkzeug.utils import secure_filename
 import shutil
+import sqlite3
+from dataclasses import dataclass, asdict
+import hashlib
+import csv
+import io
 
 app = Flask(__name__)
+app.secret_key = 'your-secret-key-here-change-in-production'
 app.config['WORKSPACE'] = 'workspace'
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['CHAT_HISTORY_FILE'] = 'chat_history.json'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+app.config['DATABASE'] = 'advanced_app.db'
 
 # Create necessary directories
 os.makedirs(app.config['WORKSPACE'], exist_ok=True)
@@ -35,6 +42,314 @@ running_tasks = {}
 
 # Load configuration
 config = toml.load('config/config.toml')
+
+# Advanced Data Models
+@dataclass
+class FilterCriteria:
+    field: str
+    operator: str
+    value: Any
+    logical_operator: str = "AND"
+
+@dataclass
+class DataRecord:
+    id: str
+    timestamp: datetime
+    category: str
+    tags: List[str]
+    content: str
+    metadata: Dict[str, Any]
+    status: str = "active"
+
+# Advanced Database Management
+class AdvancedDatabaseManager:
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        self.init_database()
+    
+    def init_database(self):
+        """Initialize database with advanced tables"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            
+            # Main data table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS data_records (
+                    id TEXT PRIMARY KEY,
+                    timestamp TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    tags TEXT,
+                    content TEXT NOT NULL,
+                    metadata TEXT,
+                    status TEXT DEFAULT 'active',
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Filter presets table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS filter_presets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    filter_criteria TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Export history table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS export_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    export_type TEXT NOT NULL,
+                    filter_criteria TEXT,
+                    record_count INTEGER,
+                    exported_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # User sessions table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS user_sessions (
+                    id TEXT PRIMARY KEY,
+                    user_data TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    last_activity TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            conn.commit()
+    
+    def add_record(self, record: DataRecord) -> bool:
+        """Add a new data record"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO data_records (id, timestamp, category, tags, content, metadata, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    record.id,
+                    record.timestamp.isoformat(),
+                    record.category,
+                    json.dumps(record.tags),
+                    record.content,
+                    json.dumps(record.metadata),
+                    record.status
+                ))
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Error adding record: {e}")
+            return False
+    
+    def get_records(self, filters: List[FilterCriteria] = None, limit: int = 100, offset: int = 0) -> List[DataRecord]:
+        """Get records with advanced filtering"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                query = "SELECT * FROM data_records WHERE 1=1"
+                params = []
+                
+                if filters:
+                    for filter_criteria in filters:
+                        if filter_criteria.operator == "contains":
+                            query += f" AND {filter_criteria.field} LIKE ?"
+                            params.append(f"%{filter_criteria.value}%")
+                        elif filter_criteria.operator == "equals":
+                            query += f" AND {filter_criteria.field} = ?"
+                            params.append(filter_criteria.value)
+                        elif filter_criteria.operator == "greater_than":
+                            query += f" AND {filter_criteria.field} > ?"
+                            params.append(filter_criteria.value)
+                        elif filter_criteria.operator == "less_than":
+                            query += f" AND {filter_criteria.field} < ?"
+                            params.append(filter_criteria.value)
+                        elif filter_criteria.operator == "in":
+                            placeholders = ','.join(['?' for _ in filter_criteria.value])
+                            query += f" AND {filter_criteria.field} IN ({placeholders})"
+                            params.extend(filter_criteria.value)
+                
+                query += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+                params.extend([limit, offset])
+                
+                cursor.execute(query, params)
+                rows = cursor.fetchall()
+                
+                records = []
+                for row in rows:
+                    record = DataRecord(
+                        id=row[0],
+                        timestamp=datetime.fromisoformat(row[1]),
+                        category=row[2],
+                        tags=json.loads(row[3]) if row[3] else [],
+                        content=row[4],
+                        metadata=json.loads(row[5]) if row[5] else {},
+                        status=row[6]
+                    )
+                    records.append(record)
+                
+                return records
+        except Exception as e:
+            logger.error(f"Error getting records: {e}")
+            return []
+    
+    def save_filter_preset(self, name: str, description: str, filters: List[FilterCriteria]) -> bool:
+        """Save a filter preset"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO filter_presets (name, description, filter_criteria)
+                    VALUES (?, ?, ?)
+                ''', (name, description, json.dumps([asdict(f) for f in filters])))
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Error saving filter preset: {e}")
+            return False
+    
+    def get_filter_presets(self) -> List[Dict]:
+        """Get all filter presets"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT * FROM filter_presets ORDER BY created_at DESC')
+                rows = cursor.fetchall()
+                
+                presets = []
+                for row in rows:
+                    presets.append({
+                        'id': row[0],
+                        'name': row[1],
+                        'description': row[2],
+                        'filter_criteria': json.loads(row[3]),
+                        'created_at': row[4]
+                    })
+                return presets
+        except Exception as e:
+            logger.error(f"Error getting filter presets: {e}")
+            return []
+    
+    def update_record(self, record: DataRecord) -> bool:
+        """Update an existing data record"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE data_records 
+                    SET timestamp = ?, category = ?, tags = ?, content = ?, metadata = ?, status = ?
+                    WHERE id = ?
+                ''', (
+                    record.timestamp.isoformat(),
+                    record.category,
+                    json.dumps(record.tags),
+                    record.content,
+                    json.dumps(record.metadata),
+                    record.status,
+                    record.id
+                ))
+                conn.commit()
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error updating record: {e}")
+            return False
+    
+    def delete_record(self, record_id: str) -> bool:
+        """Delete a data record"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM data_records WHERE id = ?', (record_id,))
+                conn.commit()
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error deleting record: {e}")
+            return False
+    
+    def get_record_by_id(self, record_id: str) -> Optional[DataRecord]:
+        """Get a single record by ID"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT * FROM data_records WHERE id = ?', (record_id,))
+                row = cursor.fetchone()
+                
+                if row:
+                    return DataRecord(
+                        id=row[0],
+                        timestamp=datetime.fromisoformat(row[1]),
+                        category=row[2],
+                        tags=json.loads(row[3]) if row[3] else [],
+                        content=row[4],
+                        metadata=json.loads(row[5]) if row[5] else {},
+                        status=row[6]
+                    )
+                return None
+        except Exception as e:
+            logger.error(f"Error getting record by ID: {e}")
+            return None
+    
+    def get_categories(self) -> List[str]:
+        """Get all unique categories"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT DISTINCT category FROM data_records ORDER BY category')
+                return [row[0] for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Error getting categories: {e}")
+            return []
+    
+    def get_tags(self) -> List[str]:
+        """Get all unique tags"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT tags FROM data_records WHERE tags IS NOT NULL')
+                all_tags = []
+                for row in cursor.fetchall():
+                    if row[0]:
+                        tags = json.loads(row[0])
+                        all_tags.extend(tags)
+                return list(set(all_tags))  # Remove duplicates
+        except Exception as e:
+            logger.error(f"Error getting tags: {e}")
+            return []
+    
+    def get_recent_records(self, hours: int = 24) -> List[DataRecord]:
+        """Get records from the last N hours"""
+        try:
+            cutoff_time = datetime.now() - timedelta(hours=hours)
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT * FROM data_records 
+                    WHERE timestamp > ? 
+                    ORDER BY timestamp DESC
+                ''', (cutoff_time.isoformat(),))
+                
+                rows = cursor.fetchall()
+                records = []
+                for row in rows:
+                    record = DataRecord(
+                        id=row[0],
+                        timestamp=datetime.fromisoformat(row[1]),
+                        category=row[2],
+                        tags=json.loads(row[3]) if row[3] else [],
+                        content=row[4],
+                        metadata=json.loads(row[5]) if row[5] else {},
+                        status=row[6]
+                    )
+                    records.append(record)
+                return records
+        except Exception as e:
+            logger.error(f"Error getting recent records: {e}")
+            return []
+
+# Initialize database manager
+db_manager = AdvancedDatabaseManager(app.config['DATABASE'])
 
 # Advanced API Key Management System
 class AdvancedAPIKeyManager:
@@ -99,19 +414,15 @@ class AdvancedAPIKeyManager:
         current_time = time.time()
         
         # Check if key is disabled
-        if not key_config['enabled']:
-            return False
-        
-        # Check if key is in cooldown period (24 hours after rate limit)
         if api_key in self.disabled_keys:
             if current_time < self.disabled_keys[api_key]:
-                logger.debug(f"Key {key_config['name']} still in cooldown")
                 return False
             else:
-                # Cooldown expired, remove from disabled list
                 del self.disabled_keys[api_key]
-                self.failure_counts[api_key] = 0  # Reset failure count
-                logger.info(f"Key {key_config['name']} cooldown expired, re-enabling")
+        
+        # Check if key is enabled
+        if not key_config.get('enabled', True):
+            return False
         
         # Clean old usage data
         self._clean_old_usage_data(api_key)
@@ -120,182 +431,250 @@ class AdvancedAPIKeyManager:
         stats = self.usage_stats[api_key]
         
         if len(stats['requests_this_minute']) >= key_config['max_requests_per_minute']:
-            logger.debug(f"Key {key_config['name']} hit minute limit")
             return False
         
         if len(stats['requests_this_hour']) >= key_config['max_requests_per_hour']:
-            logger.debug(f"Key {key_config['name']} hit hour limit")
             return False
         
         if len(stats['requests_this_day']) >= key_config['max_requests_per_day']:
-            logger.debug(f"Key {key_config['name']} hit daily limit")
-            # Disable key for 24 hours
-            self._disable_key_for_rate_limit(api_key, key_config['name'])
             return False
         
         return True
     
     def _disable_key_for_rate_limit(self, api_key: str, key_name: str):
-        """Disable API key for 24 hours due to rate limit"""
-        disable_until = time.time() + 24 * 60 * 60  # 24 hours
-        self.disabled_keys[api_key] = disable_until
-        
-        logger.warning(f"API key {key_name} disabled for 24 hours due to rate limit")
+        """Disable a key temporarily due to rate limiting"""
+        disable_duration = min(300, 60 * (2 ** self.failure_counts[api_key]))  # Exponential backoff
+        self.disabled_keys[api_key] = time.time() + disable_duration
+        logger.warning(f"API key {key_name} disabled for {disable_duration} seconds due to rate limiting")
     
     def _calculate_key_score(self, key_config: dict) -> float:
         """Calculate a score for key selection (higher is better)"""
         api_key = key_config['api_key']
         current_time = time.time()
         
-        # Base score from priority (lower priority number = higher score)
-        priority_score = 10.0 / max(key_config['priority'], 1)
+        # Base score from priority
+        score = key_config.get('priority', 1) * 100
         
-        # Usage-based score (less recent usage = higher score)
+        # Penalty for recent usage (prefer less recently used keys)
+        if api_key in self.last_used:
+            time_since_last_use = current_time - self.last_used[api_key]
+            score += min(time_since_last_use / 60, 50)  # Max 50 points for time
+        
+        # Penalty for failure count
+        failure_penalty = self.failure_counts[api_key] * 10
+        score -= failure_penalty
+        
+        # Bonus for low usage
         stats = self.usage_stats[api_key]
-        minute_usage = len(stats['requests_this_minute'])
-        hour_usage = len(stats['requests_this_hour'])
-        day_usage = len(stats['requests_this_day'])
+        usage_ratio = len(stats['requests_this_hour']) / key_config['max_requests_per_hour']
+        score += (1 - usage_ratio) * 20
         
-        # Calculate remaining capacity
-        minute_capacity = 1.0 - (minute_usage / key_config['max_requests_per_minute'])
-        hour_capacity = 1.0 - (hour_usage / key_config['max_requests_per_hour'])
-        day_capacity = 1.0 - (day_usage / key_config['max_requests_per_day'])
-        
-        capacity_score = (minute_capacity + hour_capacity + day_capacity) / 3
-        
-        # Failure-based score (fewer failures = higher score)
-        failure_score = 1.0 / (self.failure_counts[api_key] + 1)
-        
-        # Time since last use (longer = slightly higher score)
-        time_score = 1.0
-        if self.last_used[api_key]:
-            time_since_use = current_time - self.last_used[api_key]
-            time_score = min(1.0 + (time_since_use / 3600), 2.0)  # Max 2x after 1 hour
-        
-        # Combine all factors
-        final_score = priority_score * capacity_score * failure_score * time_score
-        return max(final_score, 0.1)  # Minimum score
+        return max(score, 0)
     
     def get_available_api_key(self, use_random: bool = True) -> Optional[Tuple[str, dict]]:
-        """Get an available API key with advanced selection logic"""
+        """Get the best available API key"""
         available_keys = []
         
-        # Find all available keys
         for key_config in self.api_keys:
             if self._is_key_available(key_config):
                 available_keys.append(key_config)
         
         if not available_keys:
-            logger.warning("No API keys available")
+            logger.error("No available API keys found")
             return None
         
         if use_random and len(available_keys) > 1:
-            # Advanced weighted random selection
-            weights = []
-            for key_config in available_keys:
-                score = self._calculate_key_score(key_config)
-                weights.append(score)
+            # Use weighted random selection based on scores
+            scores = [self._calculate_key_score(key_config) for key_config in available_keys]
+            total_score = sum(scores)
             
-            # Weighted random choice
-            selected_key = random.choices(available_keys, weights=weights)[0]
-            logger.info(f"Randomly selected API key: {selected_key['name']} (weighted selection)")
+            if total_score > 0:
+                weights = [score / total_score for score in scores]
+                selected_key = random.choices(available_keys, weights=weights)[0]
+            else:
+                selected_key = random.choice(available_keys)
         else:
-            # Priority-based selection with health metrics
-            available_keys.sort(key=lambda k: (
-                k['priority'],
-                -self._calculate_key_score(k),
-                self.failure_counts[k['api_key']],
-                k['api_key']  # Deterministic tie-breaker
-            ))
-            selected_key = available_keys[0]
-            logger.info(f"Priority selected API key: {selected_key['name']}")
+            # Select the key with the highest score
+            selected_key = max(available_keys, key=lambda k: self._calculate_key_score(k))
         
-        return selected_key['api_key'], selected_key
+        api_key = selected_key['api_key']
+        self.last_used[api_key] = time.time()
+        
+        return api_key, selected_key
     
     def record_successful_request(self, api_key: str):
         """Record a successful API request"""
-        current_time = time.time()
-        stats = self.usage_stats[api_key]
-        
-        # Add timestamps
-        stats['requests_this_minute'].append(current_time)
-        stats['requests_this_hour'].append(current_time)
-        stats['requests_this_day'].append(current_time)
-        stats['total_requests'] += 1
-        
-        # Update last used time
-        self.last_used[api_key] = current_time
-        
-        # Reset failure count on success
-        self.failure_counts[api_key] = 0
-        
-        logger.info(f"Recorded successful request for API key")
+        if api_key in self.usage_stats:
+            current_time = time.time()
+            stats = self.usage_stats[api_key]
+            
+            stats['requests_this_minute'].append(current_time)
+            stats['requests_this_hour'].append(current_time)
+            stats['requests_this_day'].append(current_time)
+            stats['total_requests'] += 1
+            
+            # Reset failure count on success
+            self.failure_counts[api_key] = 0
     
     def record_rate_limit_error(self, api_key: str, key_name: str):
-        """Record a rate limit error and disable the key"""
+        """Record a rate limit error"""
+        self.failure_counts[api_key] = self.failure_counts.get(api_key, 0) + 1
         self._disable_key_for_rate_limit(api_key, key_name)
-        self.failure_counts[api_key] += 1
-        logger.warning(f"Rate limit error recorded for {key_name}")
+        logger.warning(f"Rate limit error for API key {key_name}")
     
     def record_failure(self, api_key: str, key_name: str, error_type: str = "unknown"):
-        """Record a failure for an API key"""
-        self.failure_counts[api_key] += 1
-        logger.warning(f"Failure recorded for {key_name}: {error_type} (consecutive: {self.failure_counts[api_key]})")
-        
-        # If too many consecutive failures, disable temporarily
-        if self.failure_counts[api_key] >= 5:
-            # Exponential backoff: 5 minutes * 2^(failures-5)
-            backoff_minutes = 5 * (2 ** (self.failure_counts[api_key] - 5))
-            backoff_minutes = min(backoff_minutes, 240)  # Cap at 4 hours
-            
-            disable_until = time.time() + (backoff_minutes * 60)
-            self.disabled_keys[api_key] = disable_until
-            logger.warning(f"Temporarily disabled {key_name} for {backoff_minutes} minutes due to failures")
+        """Record a general API failure"""
+        self.failure_counts[api_key] = self.failure_counts.get(api_key, 0) + 1
+        logger.error(f"API failure for key {key_name}: {error_type}")
     
     def get_keys_status(self) -> List[Dict]:
-        """Get detailed status of all API keys"""
+        """Get status of all API keys"""
         status_list = []
-        current_time = time.time()
         
         for key_config in self.api_keys:
             api_key = key_config['api_key']
+            current_time = time.time()
+            
+            # Clean old data
             self._clean_old_usage_data(api_key)
             
+            # Check if disabled
+            is_disabled = api_key in self.disabled_keys and current_time < self.disabled_keys[api_key]
+            
+            # Get usage stats
             stats = self.usage_stats[api_key]
-            is_available = self._is_key_available(key_config)
             
             status = {
                 'name': key_config['name'],
-                'enabled': key_config['enabled'],
-                'available': is_available,
+                'enabled': key_config.get('enabled', True) and not is_disabled,
+                'priority': key_config.get('priority', 1),
                 'usage': {
-                    'requests_this_minute': len(stats['requests_this_minute']),
-                    'requests_this_hour': len(stats['requests_this_hour']),
-                    'requests_this_day': len(stats['requests_this_day']),
-                    'total_requests': stats['total_requests']
+                    'minute': len(stats['requests_this_minute']),
+                    'hour': len(stats['requests_this_hour']),
+                    'day': len(stats['requests_this_day']),
+                    'total': stats['total_requests']
                 },
                 'limits': {
-                    'max_per_minute': key_config['max_requests_per_minute'],
-                    'max_per_hour': key_config['max_requests_per_hour'],
-                    'max_per_day': key_config['max_requests_per_day']
+                    'minute': key_config['max_requests_per_minute'],
+                    'hour': key_config['max_requests_per_hour'],
+                    'day': key_config['max_requests_per_day']
                 },
-                'failures': self.failure_counts[api_key],
-                'last_used': datetime.fromtimestamp(self.last_used[api_key]).isoformat() if self.last_used[api_key] else "Never"
+                'failures': self.failure_counts.get(api_key, 0),
+                'last_used': self.last_used.get(api_key),
+                'disabled_until': self.disabled_keys.get(api_key)
             }
-            
-            # Add cooldown info if applicable
-            if api_key in self.disabled_keys:
-                remaining_time = int(self.disabled_keys[api_key] - current_time)
-                if remaining_time > 0:
-                    status['cooldown_remaining_seconds'] = remaining_time
-                    status['cooldown_remaining_readable'] = f"{remaining_time // 3600}h {(remaining_time % 3600) // 60}m"
             
             status_list.append(status)
         
         return status_list
 
-# Initialize the advanced API key manager
-api_key_manager = AdvancedAPIKeyManager(config['llm']['api_keys'])
+# Initialize API key manager
+api_key_manager = AdvancedAPIKeyManager(config.get('api_keys', []))
+
+# Advanced Data Export Manager
+class DataExportManager:
+    @staticmethod
+    def export_to_csv(records: List[DataRecord]) -> str:
+        """Export records to CSV format"""
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Write header
+        writer.writerow(['ID', 'Timestamp', 'Category', 'Tags', 'Content', 'Status', 'Metadata'])
+        
+        # Write data
+        for record in records:
+            writer.writerow([
+                record.id,
+                record.timestamp.isoformat(),
+                record.category,
+                ', '.join(record.tags),
+                record.content,
+                record.status,
+                json.dumps(record.metadata)
+            ])
+        
+        return output.getvalue()
+    
+    @staticmethod
+    def export_to_json(records: List[DataRecord]) -> str:
+        """Export records to JSON format"""
+        data = []
+        for record in records:
+            data.append({
+                'id': record.id,
+                'timestamp': record.timestamp.isoformat(),
+                'category': record.category,
+                'tags': record.tags,
+                'content': record.content,
+                'status': record.status,
+                'metadata': record.metadata
+            })
+        
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    
+    @staticmethod
+    def export_to_xml(records: List[DataRecord]) -> str:
+        """Export records to XML format"""
+        xml_lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<records>']
+        
+        for record in records:
+            xml_lines.append('  <record>')
+            xml_lines.append(f'    <id>{record.id}</id>')
+            xml_lines.append(f'    <timestamp>{record.timestamp.isoformat()}</timestamp>')
+            xml_lines.append(f'    <category>{record.category}</category>')
+            xml_lines.append('    <tags>')
+            for tag in record.tags:
+                xml_lines.append(f'      <tag>{tag}</tag>')
+            xml_lines.append('    </tags>')
+            xml_lines.append(f'    <content><![CDATA[{record.content}]]></content>')
+            xml_lines.append(f'    <status>{record.status}</status>')
+            xml_lines.append(f'    <metadata>{json.dumps(record.metadata)}</metadata>')
+            xml_lines.append('  </record>')
+        
+        xml_lines.append('</records>')
+        return '\n'.join(xml_lines)
+
+# Advanced Filter Manager
+class AdvancedFilterManager:
+    @staticmethod
+    def parse_filter_string(filter_string: str) -> List[FilterCriteria]:
+        """Parse filter string into FilterCriteria objects"""
+        filters = []
+        
+        # Simple parsing for demonstration
+        # Format: field:operator:value,field2:operator2:value2
+        filter_parts = filter_string.split(',')
+        
+        for part in filter_parts:
+            if ':' in part:
+                field, operator, value = part.split(':', 2)
+                filters.append(FilterCriteria(
+                    field=field.strip(),
+                    operator=operator.strip(),
+                    value=value.strip()
+                ))
+        
+        return filters
+    
+    @staticmethod
+    def validate_filter(filters: List[FilterCriteria]) -> Tuple[bool, str]:
+        """Validate filter criteria"""
+        valid_operators = ['contains', 'equals', 'greater_than', 'less_than', 'in']
+        valid_fields = ['category', 'tags', 'content', 'status', 'timestamp']
+        
+        for filter_criteria in filters:
+            if filter_criteria.field not in valid_fields:
+                return False, f"Invalid field: {filter_criteria.field}"
+            
+            if filter_criteria.operator not in valid_operators:
+                return False, f"Invalid operator: {filter_criteria.operator}"
+        
+        return True, "Valid"
+
+# Initialize managers
+export_manager = DataExportManager()
+filter_manager = AdvancedFilterManager()
 
 # 初始化工作目录
 os.makedirs(app.config['WORKSPACE'], exist_ok=True)
@@ -304,166 +683,938 @@ FILE_CHECK_INTERVAL = 2  # 文件检查间隔（秒）
 PROCESS_TIMEOUT = 6099999990    # 最长处理时间（秒）
 
 def get_files_pathlib(root_dir):
-    """使用pathlib递归获取文件路径"""
-    root = Path(root_dir)
-    return [str(path) for path in root.glob('**/*') if path.is_file()]
+    """Get all files in directory using pathlib"""
+    return list(Path(root_dir).rglob('*'))
 
 @app.route('/')
 def index():
-    files = os.listdir(app.config['WORKSPACE'])
-    return render_template('index.html', files=files)
+    """Enhanced main page with advanced features"""
+    return render_template('index.html')
 
 @app.route('/file/<filename>')
 def file(filename):
-    file_path = os.path.join(app.config['WORKSPACE'], filename)
-    if os.path.isfile(file_path):
-        mime_type, _ = mimetypes.guess_type(filename)
-        if mime_type and mime_type.startswith('text/'):
-            if mime_type == 'text/html':
-                return send_from_directory(app.config['WORKSPACE'], filename)
-            else:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                return render_template('code.html', filename=filename, content=content)
-        elif mime_type == 'application/pdf':
-            return send_from_directory(app.config['WORKSPACE'], filename)
+    """Serve uploaded files"""
+    try:
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        if os.path.exists(file_path):
+            mime_type, _ = mimetypes.guess_type(file_path)
+            if mime_type is None:
+                mime_type = 'application/octet-stream'
+            
+            return send_from_directory(
+                app.config['UPLOAD_FOLDER'],
+                filename,
+                mimetype=mime_type
+            )
         else:
-            return send_from_directory(app.config['WORKSPACE'], filename)
-    else:
-        return "File not found", 404
+            return jsonify({'error': 'File not found'}), 404
+    except Exception as e:
+        logger.error(f"Error serving file {filename}: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/api/keys/status')
 def api_keys_status():
-    """API endpoint to get status of all API keys"""
+    """Get API keys status"""
     return jsonify(api_key_manager.get_keys_status())
 
-# File upload utilities
+# Advanced Data Management Routes
+@app.route('/api/data/add', methods=['POST'])
+def add_data_record():
+    """Add a new data record with enhanced features"""
+    try:
+        data = request.get_json()
+        
+        # Enhanced validation
+        if not data.get('content', '').strip():
+            return jsonify({'success': False, 'error': 'Content is required'}), 400
+        
+        if not data.get('category', '').strip():
+            return jsonify({'success': False, 'error': 'Category is required'}), 400
+        
+        # Auto-generate tags from content if not provided
+        tags = data.get('tags', [])
+        if not tags and data.get('content'):
+            # Simple keyword extraction
+            content_words = data['content'].lower().split()
+            common_words = ['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by']
+            keywords = [word for word in content_words if word not in common_words and len(word) > 3][:5]
+            tags = keywords[:3]  # Limit to 3 auto-generated tags
+        
+        # Enhanced metadata
+        metadata = data.get('metadata', {})
+        metadata.update({
+            'created_by': request.remote_addr,
+            'user_agent': request.headers.get('User-Agent', ''),
+            'content_length': len(data.get('content', '')),
+            'word_count': len(data.get('content', '').split()),
+            'auto_generated_tags': len(tags) == 0
+        })
+        
+        record = DataRecord(
+            id=str(uuid.uuid4()),
+            timestamp=datetime.fromisoformat(data.get('timestamp', datetime.now().isoformat())),
+            category=data.get('category', 'general'),
+            tags=tags,
+            content=data.get('content', ''),
+            metadata=metadata,
+            status=data.get('status', 'active')
+        )
+        
+        if db_manager.add_record(record):
+            # Return the complete record for immediate display
+            return jsonify({
+                'success': True, 
+                'id': record.id,
+                'record': {
+                    'id': record.id,
+                    'timestamp': record.timestamp.isoformat(),
+                    'category': record.category,
+                    'tags': record.tags,
+                    'content': record.content,
+                    'status': record.status,
+                    'metadata': record.metadata
+                }
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Failed to add record'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error adding data record: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/data/update', methods=['PUT'])
+def update_data_record():
+    """Update an existing data record"""
+    try:
+        data = request.get_json()
+        record_id = data.get('id')
+        
+        if not record_id:
+            return jsonify({'success': False, 'error': 'Record ID is required'}), 400
+        
+        # Get existing record
+        existing_records = db_manager.get_records([FilterCriteria('id', 'equals', record_id)], limit=1)
+        if not existing_records:
+            return jsonify({'success': False, 'error': 'Record not found'}), 404
+        
+        existing_record = existing_records[0]
+        
+        # Update fields
+        if 'category' in data:
+            existing_record.category = data['category']
+        if 'content' in data:
+            existing_record.content = data['content']
+        if 'tags' in data:
+            existing_record.tags = data['tags']
+        if 'status' in data:
+            existing_record.status = data['status']
+        
+        # Update metadata
+        existing_record.metadata.update({
+            'last_modified': datetime.now().isoformat(),
+            'modified_by': request.remote_addr,
+            'content_length': len(existing_record.content),
+            'word_count': len(existing_record.content.split())
+        })
+        
+        # Update in database
+        if db_manager.update_record(existing_record):
+            return jsonify({
+                'success': True,
+                'record': {
+                    'id': existing_record.id,
+                    'timestamp': existing_record.timestamp.isoformat(),
+                    'category': existing_record.category,
+                    'tags': existing_record.tags,
+                    'content': existing_record.content,
+                    'status': existing_record.status,
+                    'metadata': existing_record.metadata
+                }
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Failed to update record'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error updating data record: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/data/delete/<record_id>', methods=['DELETE'])
+def delete_data_record(record_id):
+    """Delete a data record"""
+    try:
+        if db_manager.delete_record(record_id):
+            return jsonify({'success': True, 'message': 'Record deleted successfully'})
+        else:
+            return jsonify({'success': False, 'error': 'Failed to delete record'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error deleting data record: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/data/live', methods=['GET'])
+def get_live_data():
+    """Get live data updates with real-time features"""
+    try:
+        # Get query parameters
+        filters_str = request.args.get('filters', '')
+        limit = int(request.args.get('limit', 50))
+        offset = int(request.args.get('offset', 0))
+        last_update = request.args.get('last_update', '')
+        
+        filters = []
+        if filters_str:
+            filters = filter_manager.parse_filter_string(filters_str)
+        
+        # Get records
+        records = db_manager.get_records(filters, limit, offset)
+        
+        # Check for new records since last update
+        new_records = []
+        if last_update:
+            try:
+                last_update_time = datetime.fromisoformat(last_update)
+                new_records = [r for r in records if r.timestamp > last_update_time]
+            except:
+                pass
+        
+        # Convert to dict for JSON serialization
+        records_data = []
+        for record in records:
+            records_data.append({
+                'id': record.id,
+                'timestamp': record.timestamp.isoformat(),
+                'category': record.category,
+                'tags': record.tags,
+                'content': record.content,
+                'status': record.status,
+                'metadata': record.metadata,
+                'is_new': record.id in [r.id for r in new_records]
+            })
+        
+        return jsonify({
+            'success': True, 
+            'records': records_data,
+            'total_count': len(records),
+            'new_count': len(new_records),
+            'current_time': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting live data: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/data/get', methods=['GET'])
+def get_data_records():
+    """Get data records with advanced filtering"""
+    try:
+        # Parse query parameters
+        filters_str = request.args.get('filters', '')
+        limit = int(request.args.get('limit', 100))
+        offset = int(request.args.get('offset', 0))
+        
+        filters = []
+        if filters_str:
+            filters = filter_manager.parse_filter_string(filters_str)
+        
+        # Validate filters
+        is_valid, error_msg = filter_manager.validate_filter(filters)
+        if not is_valid:
+            return jsonify({'success': False, 'error': error_msg}), 400
+        
+        records = db_manager.get_records(filters, limit, offset)
+        
+        # Convert to dict for JSON serialization
+        records_data = []
+        for record in records:
+            records_data.append({
+                'id': record.id,
+                'timestamp': record.timestamp.isoformat(),
+                'category': record.category,
+                'tags': record.tags,
+                'content': record.content,
+                'status': record.status,
+                'metadata': record.metadata
+            })
+        
+        return jsonify({'success': True, 'records': records_data})
+        
+    except Exception as e:
+        logger.error(f"Error getting data records: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/data/export', methods=['POST'])
+def export_data():
+    """Export data in various formats"""
+    try:
+        data = request.get_json()
+        export_format = data.get('format', 'json')
+        filters_str = data.get('filters', '')
+        
+        filters = []
+        if filters_str:
+            filters = filter_manager.parse_filter_string(filters_str)
+        
+        records = db_manager.get_records(filters, limit=10000)  # Large limit for export
+        
+        if export_format == 'csv':
+            content = export_manager.export_to_csv(records)
+            return Response(content, mimetype='text/csv', headers={
+                'Content-Disposition': f'attachment; filename=export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+            })
+        elif export_format == 'json':
+            content = export_manager.export_to_json(records)
+            return Response(content, mimetype='application/json', headers={
+                'Content-Disposition': f'attachment; filename=export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
+            })
+        elif export_format == 'xml':
+            content = export_manager.export_to_xml(records)
+            return Response(content, mimetype='application/xml', headers={
+                'Content-Disposition': f'attachment; filename=export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xml'
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Unsupported export format'}), 400
+            
+    except Exception as e:
+        logger.error(f"Error exporting data: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/filters/presets', methods=['GET', 'POST'])
+def manage_filter_presets():
+    """Manage filter presets"""
+    if request.method == 'GET':
+        presets = db_manager.get_filter_presets()
+        return jsonify({'success': True, 'presets': presets})
+    
+    elif request.method == 'POST':
+        try:
+            data = request.get_json()
+            name = data.get('name')
+            description = data.get('description', '')
+            filters_str = data.get('filters', '')
+            
+            if not name or not filters_str:
+                return jsonify({'success': False, 'error': 'Name and filters are required'}), 400
+            
+            filters = filter_manager.parse_filter_string(filters_str)
+            is_valid, error_msg = filter_manager.validate_filter(filters)
+            
+            if not is_valid:
+                return jsonify({'success': False, 'error': error_msg}), 400
+            
+            if db_manager.save_filter_preset(name, description, filters):
+                return jsonify({'success': True})
+            else:
+                return jsonify({'success': False, 'error': 'Failed to save preset'}), 500
+                
+        except Exception as e:
+            logger.error(f"Error saving filter preset: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/data/statistics', methods=['GET'])
+def get_data_statistics():
+    """Get enhanced data statistics"""
+    try:
+        # Get basic statistics
+        all_records = db_manager.get_records(limit=10000)
+        
+        # Category statistics
+        categories = {}
+        tags = {}
+        statuses = {}
+        hourly_stats = {}
+        daily_stats = {}
+        
+        for record in all_records:
+            # Category count
+            categories[record.category] = categories.get(record.category, 0) + 1
+            
+            # Tag count
+            for tag in record.tags:
+                tags[tag] = tags.get(tag, 0) + 1
+            
+            # Status count
+            statuses[record.status] = statuses.get(record.status, 0) + 1
+            
+            # Hourly statistics
+            hour = record.timestamp.hour
+            hourly_stats[hour] = hourly_stats.get(hour, 0) + 1
+            
+            # Daily statistics
+            day = record.timestamp.strftime('%Y-%m-%d')
+            daily_stats[day] = daily_stats.get(day, 0) + 1
+        
+        # Time-based statistics
+        now = datetime.now()
+        recent_records = [r for r in all_records if (now - r.timestamp).days <= 7]
+        today_records = [r for r in all_records if (now - r.timestamp).days == 0]
+        
+        # Content analysis
+        content_lengths = [len(r.content) for r in all_records]
+        word_counts = [r.metadata.get('word_count', len(r.content.split())) for r in all_records]
+        
+        statistics = {
+            'total_records': len(all_records),
+            'recent_records': len(recent_records),
+            'today_records': len(today_records),
+            'categories': categories,
+            'top_tags': dict(sorted(tags.items(), key=lambda x: x[1], reverse=True)[:10]),
+            'statuses': statuses,
+            'hourly_distribution': dict(sorted(hourly_stats.items())),
+            'daily_distribution': dict(sorted(daily_stats.items())[-30:]),  # Last 30 days
+            'content_analysis': {
+                'average_content_length': sum(content_lengths) / len(content_lengths) if content_lengths else 0,
+                'average_word_count': sum(word_counts) / len(word_counts) if word_counts else 0,
+                'max_content_length': max(content_lengths) if content_lengths else 0,
+                'min_content_length': min(content_lengths) if content_lengths else 0
+            },
+            'growth_rate': {
+                'last_7_days': len(recent_records),
+                'last_24_hours': len(today_records),
+                'average_daily': len(all_records) / max(1, (now - min(r.timestamp for r in all_records)).days) if all_records else 0
+            }
+        }
+        
+        return jsonify({'success': True, 'statistics': statistics})
+        
+    except Exception as e:
+        logger.error(f"Error getting statistics: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/data/categories', methods=['GET'])
+def get_categories():
+    """Get all available categories"""
+    try:
+        categories = db_manager.get_categories()
+        return jsonify({'success': True, 'categories': categories})
+    except Exception as e:
+        logger.error(f"Error getting categories: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/data/tags', methods=['GET'])
+def get_tags():
+    """Get all available tags"""
+    try:
+        tags = db_manager.get_tags()
+        return jsonify({'success': True, 'tags': tags})
+    except Exception as e:
+        logger.error(f"Error getting tags: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/data/recent', methods=['GET'])
+def get_recent_data():
+    """Get recent data records"""
+    try:
+        hours = int(request.args.get('hours', 24))
+        records = db_manager.get_recent_records(hours)
+        
+        records_data = []
+        for record in records:
+            records_data.append({
+                'id': record.id,
+                'timestamp': record.timestamp.isoformat(),
+                'category': record.category,
+                'tags': record.tags,
+                'content': record.content,
+                'status': record.status,
+                'metadata': record.metadata
+            })
+        
+        return jsonify({'success': True, 'records': records_data})
+    except Exception as e:
+        logger.error(f"Error getting recent data: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/data/record/<record_id>', methods=['GET'])
+def get_single_record(record_id):
+    """Get a single record by ID"""
+    try:
+        record = db_manager.get_record_by_id(record_id)
+        if record:
+            return jsonify({
+                'success': True,
+                'record': {
+                    'id': record.id,
+                    'timestamp': record.timestamp.isoformat(),
+                    'category': record.category,
+                    'tags': record.tags,
+                    'content': record.content,
+                    'status': record.status,
+                    'metadata': record.metadata
+                }
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Record not found'}), 404
+    except Exception as e:
+        logger.error(f"Error getting single record: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/data/bulk-import', methods=['POST'])
+def bulk_import_data():
+    """Bulk import data from various formats"""
+    try:
+        if 'file' not in request.files:
+            return jsonify({'success': False, 'error': 'No file provided'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'success': False, 'error': 'No file selected'}), 400
+        
+        if file:
+            filename = secure_filename(file.filename)
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(file_path)
+            
+            # Process based on file type
+            if filename.endswith('.csv'):
+                records = process_csv_import(file_path)
+            elif filename.endswith('.json'):
+                records = process_json_import(file_path)
+            else:
+                return jsonify({'success': False, 'error': 'Unsupported file format'}), 400
+            
+            # Add records to database
+            success_count = 0
+            for record in records:
+                if db_manager.add_record(record):
+                    success_count += 1
+            
+            return jsonify({
+                'success': True,
+                'imported': success_count,
+                'total': len(records)
+            })
+            
+    except Exception as e:
+        logger.error(f"Error in bulk import: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+def process_csv_import(file_path: str) -> List[DataRecord]:
+    """Process CSV file for import"""
+    records = []
+    
+    with open(file_path, 'r', encoding='utf-8') as file:
+        reader = csv.DictReader(file)
+        for row in reader:
+            record = DataRecord(
+                id=str(uuid.uuid4()),
+                timestamp=datetime.fromisoformat(row.get('timestamp', datetime.now().isoformat())),
+                category=row.get('category', 'imported'),
+                tags=row.get('tags', '').split(',') if row.get('tags') else [],
+                content=row.get('content', ''),
+                metadata={},
+                status=row.get('status', 'active')
+            )
+            records.append(record)
+    
+    return records
+
+def process_json_import(file_path: str) -> List[DataRecord]:
+    """Process JSON file for import"""
+    records = []
+    
+    with open(file_path, 'r', encoding='utf-8') as file:
+        data = json.load(file)
+        
+        for item in data:
+            record = DataRecord(
+                id=str(uuid.uuid4()),
+                timestamp=datetime.fromisoformat(item.get('timestamp', datetime.now().isoformat())),
+                category=item.get('category', 'imported'),
+                tags=item.get('tags', []),
+                content=item.get('content', ''),
+                metadata=item.get('metadata', {}),
+                status=item.get('status', 'active')
+            )
+            records.append(record)
+    
+    return records
+
 def allowed_file(filename):
     """Check if file type is allowed"""
-    ALLOWED_EXTENSIONS = {'txt', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'doc', 'docx', 'csv', 'xlsx', 'py', 'js', 'html', 'css', 'json', 'xml', 'md'}
+    ALLOWED_EXTENSIONS = {'txt', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'doc', 'docx', 'csv', 'json', 'xml'}
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def save_chat_history(chat_data):
     """Save chat history to file"""
     try:
-        if os.path.exists(app.config['CHAT_HISTORY_FILE']):
-            with open(app.config['CHAT_HISTORY_FILE'], 'r', encoding='utf-8') as f:
-                history = json.load(f)
-        else:
-            history = []
+        history_file = app.config['CHAT_HISTORY_FILE']
         
-        history.append(chat_data)
+        # Load existing history
+        existing_history = []
+        if os.path.exists(history_file):
+            with open(history_file, 'r', encoding='utf-8') as f:
+                existing_history = json.load(f)
+        
+        # Add new chat data
+        chat_data['timestamp'] = datetime.now().isoformat()
+        existing_history.append(chat_data)
         
         # Keep only last 100 conversations
-        if len(history) > 100:
-            history = history[-100:]
+        if len(existing_history) > 100:
+            existing_history = existing_history[-100:]
         
-        with open(app.config['CHAT_HISTORY_FILE'], 'w', encoding='utf-8') as f:
-            json.dump(history, f, ensure_ascii=False, indent=2)
+        # Save updated history
+        with open(history_file, 'w', encoding='utf-8') as f:
+            json.dump(existing_history, f, indent=2, ensure_ascii=False)
+            
     except Exception as e:
         logger.error(f"Error saving chat history: {e}")
 
 def load_chat_history():
     """Load chat history from file"""
     try:
-        if os.path.exists(app.config['CHAT_HISTORY_FILE']):
-            with open(app.config['CHAT_HISTORY_FILE'], 'r', encoding='utf-8') as f:
+        history_file = app.config['CHAT_HISTORY_FILE']
+        if os.path.exists(history_file):
+            with open(history_file, 'r', encoding='utf-8') as f:
                 return json.load(f)
         return []
     except Exception as e:
         logger.error(f"Error loading chat history: {e}")
         return []
 
+# Enhanced Session Management
+@app.route('/api/session/start', methods=['POST'])
+def start_session():
+    """Start a new user session"""
+    try:
+        session_id = str(uuid.uuid4())
+        session_data = {
+            'id': session_id,
+            'start_time': datetime.now().isoformat(),
+            'user_agent': request.headers.get('User-Agent', ''),
+            'ip_address': request.remote_addr
+        }
+        
+        # Store session in database
+        with sqlite3.connect(app.config['DATABASE']) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO user_sessions (id, user_data)
+                VALUES (?, ?)
+            ''', (session_id, json.dumps(session_data)))
+            conn.commit()
+        
+        return jsonify({'success': True, 'session_id': session_id})
+        
+    except Exception as e:
+        logger.error(f"Error starting session: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/session/update', methods=['POST'])
+def update_session():
+    """Update session activity"""
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id')
+        
+        if not session_id:
+            return jsonify({'success': False, 'error': 'Session ID required'}), 400
+        
+        with sqlite3.connect(app.config['DATABASE']) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE user_sessions 
+                SET last_activity = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (session_id,))
+            conn.commit()
+        
+        return jsonify({'success': True})
+        
+    except Exception as e:
+        logger.error(f"Error updating session: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# Advanced Search and Analytics
+@app.route('/api/search', methods=['POST'])
+def advanced_search():
+    """Advanced search functionality"""
+    try:
+        data = request.get_json()
+        query = data.get('query', '')
+        search_type = data.get('type', 'all')  # all, content, tags, category
+        limit = int(data.get('limit', 50))
+        
+        if not query:
+            return jsonify({'success': False, 'error': 'Search query required'}), 400
+        
+        # Build search filters based on type
+        filters = []
+        if search_type in ['all', 'content']:
+            filters.append(FilterCriteria('content', 'contains', query))
+        if search_type in ['all', 'tags']:
+            filters.append(FilterCriteria('tags', 'contains', query))
+        if search_type in ['all', 'category']:
+            filters.append(FilterCriteria('category', 'contains', query))
+        
+        records = db_manager.get_records(filters, limit=limit)
+        
+        # Convert to response format
+        results = []
+        for record in records:
+            results.append({
+                'id': record.id,
+                'timestamp': record.timestamp.isoformat(),
+                'category': record.category,
+                'tags': record.tags,
+                'content': record.content[:200] + '...' if len(record.content) > 200 else record.content,
+                'status': record.status,
+                'relevance_score': calculate_relevance_score(record, query)
+            })
+        
+        # Sort by relevance score
+        results.sort(key=lambda x: x['relevance_score'], reverse=True)
+        
+        return jsonify({'success': True, 'results': results, 'total': len(results)})
+        
+    except Exception as e:
+        logger.error(f"Error in advanced search: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+def calculate_relevance_score(record: DataRecord, query: str) -> float:
+    """Calculate relevance score for search results"""
+    score = 0.0
+    query_lower = query.lower()
+    
+    # Content relevance (highest weight)
+    if query_lower in record.content.lower():
+        score += 10.0
+    
+    # Tag relevance
+    for tag in record.tags:
+        if query_lower in tag.lower():
+            score += 5.0
+    
+    # Category relevance
+    if query_lower in record.category.lower():
+        score += 3.0
+    
+    # Recency bonus
+    days_old = (datetime.now() - record.timestamp).days
+    if days_old <= 1:
+        score += 2.0
+    elif days_old <= 7:
+        score += 1.0
+    
+    return score
+
+# Data Backup and Restore
+@app.route('/api/backup/create', methods=['POST'])
+def create_backup():
+    """Create a backup of all data"""
+    try:
+        backup_id = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        backup_dir = os.path.join('backups', backup_id)
+        os.makedirs(backup_dir, exist_ok=True)
+        
+        # Backup database
+        shutil.copy2(app.config['DATABASE'], os.path.join(backup_dir, 'database.db'))
+        
+        # Backup uploaded files
+        upload_backup_dir = os.path.join(backup_dir, 'uploads')
+        if os.path.exists(app.config['UPLOAD_FOLDER']):
+            shutil.copytree(app.config['UPLOAD_FOLDER'], upload_backup_dir)
+        
+        # Create backup manifest
+        manifest = {
+            'backup_id': backup_id,
+            'created_at': datetime.now().isoformat(),
+            'database_size': os.path.getsize(app.config['DATABASE']),
+            'files_count': len(os.listdir(app.config['UPLOAD_FOLDER'])) if os.path.exists(app.config['UPLOAD_FOLDER']) else 0
+        }
+        
+        with open(os.path.join(backup_dir, 'manifest.json'), 'w') as f:
+            json.dump(manifest, f, indent=2)
+        
+        return jsonify({'success': True, 'backup_id': backup_id, 'manifest': manifest})
+        
+    except Exception as e:
+        logger.error(f"Error creating backup: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/backup/list', methods=['GET'])
+def list_backups():
+    """List all available backups"""
+    try:
+        backups = []
+        backup_dir = 'backups'
+        
+        if os.path.exists(backup_dir):
+            for backup_id in os.listdir(backup_dir):
+                backup_path = os.path.join(backup_dir, backup_id)
+                manifest_path = os.path.join(backup_path, 'manifest.json')
+                
+                if os.path.exists(manifest_path):
+                    with open(manifest_path, 'r') as f:
+                        manifest = json.load(f)
+                    backups.append(manifest)
+        
+        # Sort by creation time (newest first)
+        backups.sort(key=lambda x: x['created_at'], reverse=True)
+        
+        return jsonify({'success': True, 'backups': backups})
+        
+    except Exception as e:
+        logger.error(f"Error listing backups: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# Real-time Notifications
+@app.route('/api/notifications/subscribe', methods=['POST'])
+def subscribe_notifications():
+    """Subscribe to real-time notifications"""
+    try:
+        data = request.get_json()
+        notification_type = data.get('type', 'all')
+        
+        # In a real implementation, this would use WebSockets or Server-Sent Events
+        # For now, we'll return a subscription ID
+        subscription_id = str(uuid.uuid4())
+        
+        return jsonify({
+            'success': True, 
+            'subscription_id': subscription_id,
+            'message': f'Subscribed to {notification_type} notifications'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error subscribing to notifications: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# Performance Monitoring
+@app.route('/api/performance/metrics', methods=['GET'])
+def get_performance_metrics():
+    """Get system performance metrics"""
+    try:
+        import psutil
+        
+        metrics = {
+            'cpu_percent': psutil.cpu_percent(interval=1),
+            'memory_percent': psutil.virtual_memory().percent,
+            'disk_usage': psutil.disk_usage('/').percent,
+            'active_connections': len(running_tasks),
+            'database_size': os.path.getsize(app.config['DATABASE']) if os.path.exists(app.config['DATABASE']) else 0,
+            'uptime': time.time() - app.start_time if hasattr(app, 'start_time') else 0
+        }
+        
+        return jsonify({'success': True, 'metrics': metrics})
+        
+    except ImportError:
+        return jsonify({'success': False, 'error': 'psutil not available'}), 500
+    except Exception as e:
+        logger.error(f"Error getting performance metrics: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# Initialize app start time
+app.start_time = time.time()
+        logger.error(f"Error loading chat history: {e}")
+        return []
+
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
-    """Handle file upload"""
+    """Handle file uploads with enhanced features"""
     try:
         if 'file' not in request.files:
-            return jsonify({'error': 'No file part'}), 400
+            return jsonify({'success': False, 'error': 'No file part'}), 400
         
         file = request.files['file']
         if file.filename == '':
-            return jsonify({'error': 'No selected file'}), 400
+            return jsonify({'success': False, 'error': 'No file selected'}), 400
         
         if file and allowed_file(file.filename):
             filename = secure_filename(file.filename)
-            # Add timestamp to avoid conflicts
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"{timestamp}_{filename}"
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-            file.save(filepath)
             
-            # Get file info
-            file_size = os.path.getsize(filepath)
-            file_info = {
-                'filename': filename,
-                'original_name': file.filename,
-                'size': file_size,
-                'upload_time': datetime.now().isoformat(),
-                'path': filepath
-            }
+            # Add timestamp to filename to avoid conflicts
+            name, ext = os.path.splitext(filename)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{name}_{timestamp}{ext}"
+            
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(file_path)
+            
+            # Create data record for the uploaded file
+            record = DataRecord(
+                id=str(uuid.uuid4()),
+                timestamp=datetime.now(),
+                category='uploaded_file',
+                tags=['file', 'upload'],
+                content=f"Uploaded file: {filename}",
+                metadata={
+                    'filename': filename,
+                    'original_name': file.filename,
+                    'file_size': os.path.getsize(file_path),
+                    'file_type': ext[1:] if ext else 'unknown'
+                },
+                status='active'
+            )
+            
+            db_manager.add_record(record)
             
             return jsonify({
                 'success': True,
-                'file_info': file_info,
-                'message': f'File {file.filename} uploaded successfully'
+                'filename': filename,
+                'message': 'File uploaded successfully',
+                'record_id': record.id
             })
         else:
-            return jsonify({'error': 'File type not allowed'}), 400
+            return jsonify({'success': False, 'error': 'File type not allowed'}), 400
             
     except Exception as e:
-        logger.error(f"File upload error: {e}")
-        return jsonify({'error': str(e)}), 500
+        logger.error(f"Error uploading file: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/files')
 def get_uploaded_files():
-    """Get list of uploaded files"""
+    """Get list of uploaded files with enhanced metadata"""
     try:
         files = []
-        if os.path.exists(app.config['UPLOAD_FOLDER']):
-            for filename in os.listdir(app.config['UPLOAD_FOLDER']):
-                filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-                if os.path.isfile(filepath):
-                    file_info = {
-                        'filename': filename,
-                        'size': os.path.getsize(filepath),
-                        'modified_time': datetime.fromtimestamp(os.path.getmtime(filepath)).isoformat()
-                    }
-                    files.append(file_info)
+        upload_folder = app.config['UPLOAD_FOLDER']
         
-        return jsonify({'files': files})
+        if os.path.exists(upload_folder):
+            for filename in os.listdir(upload_folder):
+                file_path = os.path.join(upload_folder, filename)
+                if os.path.isfile(file_path):
+                    stat = os.stat(file_path)
+                    files.append({
+                        'name': filename,
+                        'size': stat.st_size,
+                        'modified': datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                        'type': mimetypes.guess_type(filename)[0] or 'application/octet-stream'
+                    })
+        
+        # Sort by modification time (newest first)
+        files.sort(key=lambda x: x['modified'], reverse=True)
+        
+        return jsonify({'success': True, 'files': files})
+        
     except Exception as e:
-        logger.error(f"Error getting files: {e}")
-        return jsonify({'error': str(e)}), 500
+        logger.error(f"Error getting uploaded files: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/chat-history')
 def get_chat_history():
     """Get chat history"""
-    try:
-        history = load_chat_history()
-        return jsonify({'history': history})
-    except Exception as e:
-        logger.error(f"Error getting chat history: {e}")
-        return jsonify({'error': str(e)}), 500
+    history = load_chat_history()
+    return jsonify({'success': True, 'history': history})
 
 @app.route('/api/stop-task', methods=['POST'])
 def stop_task():
-    """Stop running AI task"""
+    """Stop a running task"""
     try:
         data = request.get_json()
-        task_id = data.get('task_id', 'default')
+        task_id = data.get('task_id')
         
         if task_id in running_tasks:
             # Signal the task to stop
-            running_tasks[task_id]['stop_flag'] = True
-            logger.info(f"Stop signal sent for task: {task_id}")
-            return jsonify({'success': True, 'message': 'Stop signal sent'})
+            running_tasks[task_id]['stop_event'].set()
+            del running_tasks[task_id]
+            
+            return jsonify({'success': True, 'message': 'Task stopped successfully'})
         else:
-            return jsonify({'success': False, 'message': 'No running task found'})
+            return jsonify({'success': False, 'error': 'Task not found'}), 404
             
     except Exception as e:
         logger.error(f"Error stopping task: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 async def main(prompt, task_id=None):
     """Enhanced main function with advanced API key rotation and stop functionality"""
