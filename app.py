@@ -1506,8 +1506,6 @@ def get_performance_metrics():
 
 # Initialize app start time
 app.start_time = time.time()
-        logger.error(f"Error loading chat history: {e}")
-        return []
 
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
